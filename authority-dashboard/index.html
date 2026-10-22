@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TourShield - Command Authority Dashboard</title>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #map {
+      flex: 1;
+      height: 100%;
+      background: #1e293b;
+    }
+    .sidebar {
+      width: 420px;
+      background: #0f172a;
+      border-left: 1px solid #1e293b;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 14px;
+      overflow-y: auto;
+    }
+    .header-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .badge {
+      font-size: 0.7rem;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-weight: 700;
+      background: #064e3b;
+      color: #34d399;
+      border: 1px solid #059669;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .alert-card {
+      background: #450a0a;
+      border: 1px solid #dc2626;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .btn-dispatch {
+      width: 100%;
+      background: #dc2626;
+      color: white;
+      border: none;
+      padding: 10px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .btn-dispatch:hover { background: #b91c1c; }
+    .btn-sim {
+      width: 100%;
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 10px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-top: 4px;
+    }
+    .stat-val { color: #f8fafc; font-family: monospace; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+  <!-- Live Leaflet Map Container -->
+  <div id="map"></div>
+
+  <!-- Command Console Sidebar -->
+  <div class="sidebar">
+    <div class="header-title">
+      <span>🛡️ TourShield Command</span>
+      <span class="badge">LIVE RADAR</span>
+    </div>
+
+    <!-- Active Incident Feeds -->
+    <div class="card">
+      <div class="card-title" style="color: #f87171;">Active Emergency Incident Feeds</div>
+      
+      <div id="incidentList">
+        <div class="alert-card">
+          <div style="font-weight: 700; color: #fca5a5; font-size: 0.85rem;">⚠️ ALERT: BOUNDARY BREACH</div>
+          <div style="font-size: 0.75rem; color: #cbd5e1; margin-top: 4px;">Tourist DID: <span id="alertDid">DID:ETH:0x0b4fc71c...</span></div>
+          <div style="font-size: 0.75rem; color: #cbd5e1;">Location: <span id="alertLoc">Live GPS Stream</span></div>
+          <button class="btn-dispatch" onclick="dispatchRescue()">Dispatch Rescue Unit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telemetry Information -->
+    <div class="card">
+      <div class="card-title" style="color: #38bdf8;">Tracked Tourist Telemetry</div>
+      <div class="stat-row">
+        <span>Tourist Identity:</span>
+        <span class="stat-val" id="dispName">Scanning...</span>
+      </div>
+      <div class="stat-row">
+        <span>DID Hash:</span>
+        <span class="stat-val" id="dispDid" style="color: #60a5fa;">--</span>
+      </div>
+      <div class="stat-row">
+        <span>Live Latitude:</span>
+        <span class="stat-val" id="dispLat">--</span>
+      </div>
+      <div class="stat-row">
+        <span>Live Longitude:</span>
+        <span class="stat-val" id="dispLng">--</span>
+      </div>
+      <div class="stat-row">
+        <span>GPS Accuracy:</span>
+        <span class="stat-val" id="dispAcc">--</span>
+      </div>
+    </div>
+
+    <!-- Presentation Simulator -->
+    <div class="card">
+      <div class="card-title" style="color: #e2e8f0;">Demo Control</div>
+      <button class="btn-sim" onclick="simulateIncident()">Simulate Incident Trigger</button>
+    </div>
+  </div>
+
+  <script>
+    // Initialize Map View
+    const map = L.map('map').setView([19.0330, 73.0297], 14);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let touristMarker = null;
+    let accuracyCircle = null;
+    let dangerZonePolygon = null;
+
+    function renderLocationOnMap(lat, lng, acc, name, did) {
+      document.getElementById("dispName").innerText = name || "Active Trekker";
+      document.getElementById("dispDid").innerText = (did || "").substring(0, 16) + "...";
+      document.getElementById("dispLat").innerText = lat.toFixed(5);
+      document.getElementById("dispLng").innerText = lng.toFixed(5);
+      document.getElementById("dispAcc").innerText = `±${acc || 15}m`;
+      document.getElementById("alertLoc").innerText = `Lat ${lat.toFixed(4)}, Lng ${lng.toFixed(4)}`;
+
+      // Update or create Tourist Marker
+      if (!touristMarker) {
+        touristMarker = L.marker([lat, lng]).addTo(map)
+          .bindPopup(`<b>📍 Live Tourist: ${name}</b><br>DID: ${did}<br>Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`)
+          .openPopup();
+
+        accuracyCircle = L.circle([lat, lng], {
+          radius: acc || 20,
+          color: '#38bdf8',
+          fillColor: '#38bdf8',
+          fillOpacity: 0.15
+        }).addTo(map);
+
+        // Center map to initial live position
+        map.setView([lat, lng], 15);
+
+        // Draw Danger Sector adjacent to current live coordinates
+        const offset = 0.004;
+        const hazardCoords = [
+          [lat + 0.001, lng + 0.001],
+          [lat + offset, lng + 0.001],
+          [lat + offset, lng + offset],
+          [lat + 0.001, lng + offset]
+        ];
+
+        dangerZonePolygon = L.polygon(hazardCoords, {
+          color: '#ef4444',
+          fillColor: '#dc2626',
+          fillOpacity: 0.35,
+          weight: 2
+        }).addTo(map).bindPopup("<b>⚠️ RESTRICTED HAZARD ZONE</b><br>High-Risk Terrain Sector");
+      } else {
+        touristMarker.setLatLng([lat, lng]);
+        accuracyCircle.setLatLng([lat, lng]);
+        accuracyCircle.setRadius(acc || 20);
+        touristMarker.setPopupContent(`<b>📍 Live Tourist: ${name}</b><br>DID: ${did}<br>Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`);
+      }
+    }
+
+    // Direct Browser Hardware GPS fallback
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(
+        (pos) => {
+          renderLocationOnMap(pos.coords.latitude, pos.coords.longitude, Math.round(pos.coords.accuracy), "Local Device", "did:tourshield:0x0b4f");
+        },
+        (err) => console.log("Dashboard GPS Notice: " + err.message),
+        { enableHighAccuracy: true }
+      );
+    }
+
+    // Telemetry Sync Loop: Polls for live coordinates broadcast by the phone
+    setInterval(() => {
+      const raw = localStorage.getItem("tourshield_live_gps");
+      if (raw) {
+        try {
+          const data = JSON.parse(raw);
+          renderLocationOnMap(data.lat, data.lng, data.accuracy, data.name, data.did);
+        } catch (e) {}
+      }
+    }, 1500);
+
+    function dispatchRescue() {
+      alert("✅ Dispatch Command Sent! Emergency Response Unit deployed to tourist coordinates.");
+    }
+
+    function simulateIncident() {
+      if (touristMarker) {
+        const cur = touristMarker.getLatLng();
+        const simLat = cur.lat + 0.002;
+        const simLng = cur.lng + 0.002;
+        touristMarker.setLatLng([simLat, simLng]);
+        map.setView([simLat, simLng], 16);
+        touristMarker.bindPopup("<b>🚨 EMERGENCY BREACH DETECTED!</b><br>Status: Off-Trail Anomaly").openPopup();
+      }
+    }
+  </script>
+</body>
+</html>

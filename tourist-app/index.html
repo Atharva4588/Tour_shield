@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TourShield - Edge Safety Tracker & DID Pass</title>
+
+  <!-- PWA Metadata -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0b0f19" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+
+  <!-- Pre-cached CDN Libraries -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 16px;
+    }
+    .badge {
+      font-size: 0.75rem;
+      padding: 4px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+    .badge-offline { background: #334155; color: #94a3b8; }
+    .badge-did { background: #1e3a8a; color: #60a5fa; border: 1px solid #3b82f6; }
+    .card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .form-group {
+      margin-bottom: 12px;
+      text-align: left;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+    .form-control {
+      width: 100%;
+      padding: 12px;
+      background: #030712;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      color: #f8fafc;
+      font-size: 0.95rem;
+    }
+    .form-control:focus {
+      outline: none;
+      border-color: #38bdf8;
+    }
+    .status-banner {
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.95rem;
+      letter-spacing: 0.5px;
+    }
+    .status-safe { background: #064e3b; color: #34d399; border: 1px solid #059669; }
+    .status-breach { background: #7f1d1d; color: #f87171; border: 1px solid #dc2626; animation: blink 1s infinite; }
+    @keyframes blink { 50% { opacity: 0.7; } }
+    .data-row {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+    .data-val { color: #f3f4f6; font-family: monospace; font-weight: 600; }
+    
+    /* Tactical Radar Grid: renders cleanly even without tile internet */
+    #mobileMap {
+      height: 220px;
+      min-height: 220px;
+      width: 100%;
+      border-radius: 8px;
+      margin: 12px 0 6px 0;
+      border: 1px solid #334155;
+      background-color: #0b1120;
+      background-image: 
+        linear-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px);
+      background-size: 20px 20px;
+      z-index: 1;
+    }
+    
+    button {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      text-align: center;
+      transition: opacity 0.2s;
+    }
+    button:active { opacity: 0.7; }
+    .btn-primary { background: #2563eb; color: #ffffff; }
+    .btn-start { background: #0284c7; color: #ffffff; }
+    .btn-stop { background: #475569; color: #ffffff; }
+    .btn-sim { background: #d97706; color: #ffffff; font-size: 0.85rem; padding: 10px; }
+    .btn-logout { background: transparent; border: 1px solid #374151; color: #94a3b8; font-size: 0.8rem; padding: 8px; }
+    .btn-sos {
+      background: #dc2626;
+      color: #ffffff;
+      margin-top: 16px;
+      font-size: 1.1rem;
+      letter-spacing: 1px;
+      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4);
+    }
+    .log-container {
+      background: #030712;
+      border: 1px solid #111827;
+      border-radius: 8px;
+      padding: 10px;
+      height: 110px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+    #qrcode {
+      display: flex;
+      justify-content: center;
+      margin: 12px 0;
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+      width: fit-content;
+      margin-left: auto;
+      margin-right: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h2 style="color: #38bdf8; font-size: 1.25rem;">TourShield</h2>
+      <span style="font-size: 0.75rem; color: #64748b;">Decentralized Safety Edge</span>
+    </div>
+    <span class="badge badge-offline">100% OFFLINE</span>
+  </header>
+
+  <!-- ================= VIEW 1: BLOCKCHAIN DID ONBOARDING ================= -->
+  <div id="loginView">
+    <div class="card">
+      <div style="font-weight: 700; font-size: 1.1rem; margin-bottom: 6px; color: #38bdf8;">
+        🔐 Issue Decentralized Identity (DID)
+      </div>
+      <p style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 16px;">
+        Issue a cryptographic digital safety permit locally on device before starting the trek.
+      </p>
+
+      <form id="didForm" onsubmit="handleDIDRegistration(event)">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="touristName" class="form-control" placeholder="e.g. Atharva Dumbre" required />
+        </div>
+
+        <div class="form-group">
+          <label>Govt ID / Passport / National ID Number</label>
+          <input type="text" id="docNumber" class="form-control" placeholder="e.g. IND-9812-4412" required />
+          <span style="font-size: 0.7rem; color: #64748b;">(Hashed into SHA-256; raw document is never stored)</span>
+        </div>
+
+        <div class="form-group">
+          <label>Emergency Contact Phone Number</label>
+          <input type="tel" id="emergencyPhone" class="form-control" placeholder="e.g. +91 9876543210" required />
+        </div>
+
+        <div class="form-group">
+          <label>Trek Validity (Days)</label>
+          <input type="number" id="tripDuration" class="form-control" value="7" min="1" max="30" required />
+        </div>
+
+        <button type="submit" class="btn-primary">Generate Cryptographic Digital Pass</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= VIEW 2: ACTIVE TOURIST TELEMETRY ================= -->
+  <div id="mainDashboardView" style="display: none;">
+    <!-- Live Status Banner -->
+    <div id="statusBanner" class="status-banner status-safe">
+      STANDBY • READY TO TRACK
+    </div>
+
+    <!-- Active DID Pass Card -->
+    <div class="card" style="margin-top: 12px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span class="badge badge-did">VERIFIED DID IDENTITY</span>
+        <span id="dispExpiry" style="font-size: 0.75rem; color: #34d399;">Valid: 7 Days</span>
+      </div>
+
+      <div class="data-row">
+        <span>Tourist:</span>
+        <span class="data-val" id="dispName">--</span>
+      </div>
+      <div class="data-row">
+        <span>DID Hash:</span>
+        <span class="data-val" id="dispDid" style="color: #60a5fa; font-size: 0.75rem;">--</span>
+      </div>
+      <div class="data-row">
+        <span>Emergency Contact:</span>
+        <span class="data-val" id="dispContact">--</span>
+      </div>
+
+      <!-- Scannable Verification QR -->
+      <div id="qrcode"></div>
+
+      <button type="button" class="btn-logout" onclick="logoutDID()">Switch / Revoke Pass</button>
+    </div>
+
+    <!-- Live Telemetry & Mobile Map -->
+    <div class="card">
+      <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; color: #e2e8f0;">Edge Telemetry & Trail Map</div>
+      <div class="data-row">
+        <span>Live GPS:</span>
+        <span class="data-val" id="dispCoords">Acquiring...</span>
+      </div>
+      <div class="data-row">
+        <span>Tracker Status:</span>
+        <span class="data-val" id="dispMode">Idle</span>
+      </div>
+      <div class="data-row">
+        <span>Motion Sensor:</span>
+        <span class="data-val" id="dispMotion" style="color: #34d399;">Stationary</span>
+      </div>
+
+      <!-- Interactive Mobile Map Container -->
+      <div id="mobileMap"></div>
+
+      <button id="toggleBtn" class="btn-start" onclick="toggleTracking()">Activate Edge Tracker</button>
+      <button class="btn-sim" onclick="simulateDangerZone()">Simulate Step into Danger Zone</button>
+    </div>
+
+    <!-- Direct 2G SMS Emergency Trigger -->
+    <button type="button" class="btn-sos" onclick="sendDirectSMS('MANUAL_PANIC')">
+      🚨 SEND EMERGENCY SOS (SMS)
+    </button>
+
+    <!-- Event Logs -->
+    <div class="card" style="margin-top: 12px; flex-grow: 1;">
+      <div style="font-weight: 600; font-size: 0.8rem; margin-bottom: 6px; color: #94a3b8;">Edge Diagnostic Stream</div>
+      <div class="log-container" id="eventLog"></div>
+    </div>
+  </div>
+
+  <script>
+    // SHA-256 for local DID generation
+    async function sha256(message) {
+      const msgBuffer = new TextEncoder().encode(message);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    let activeUser = null;
+    let watchId = null;
+    let currentLat = 19.0330;
+    let currentLng = 73.0297;
+    let restrictedGeoZone = null;
+
+    // Mobile Leaflet Variables
+    let mobileLeafletMap = null;
+    let mobileUserMarker = null;
+    let mobileHazardPolygon = null;
+
+    function addLog(msg) {
+      const log = document.getElementById("eventLog");
+      if (!log) return;
+      const time = new Date().toLocaleTimeString();
+      log.innerHTML = `<div>[${time}] ${msg}</div>` + log.innerHTML;
+    }
+
+    async function handleDIDRegistration(e) {
+      e.preventDefault();
+      const name = document.getElementById("touristName").value.trim();
+      const doc = document.getElementById("docNumber").value.trim();
+      const phone = document.getElementById("emergencyPhone").value.trim();
+      const duration = parseInt(document.getElementById("tripDuration").value);
+
+      const rawHash = await sha256(`${name}:${doc}:${Date.now()}`);
+      const didString = `did:tourshield:0x${rawHash.substring(0, 16)}`;
+      const validUntil = Date.now() + (duration * 24 * 60 * 60 * 1000);
+
+      activeUser = { name, did: didString, phone, validUntil, duration };
+      localStorage.setItem("tourshield_user", JSON.stringify(activeUser));
+      renderDashboard();
+    }
+
+    function renderDashboard() {
+      if (!activeUser) return;
+      document.getElementById("loginView").style.display = "none";
+      document.getElementById("mainDashboardView").style.display = "block";
+
+      document.getElementById("dispName").innerText = activeUser.name;
+      document.getElementById("dispDid").innerText = activeUser.did;
+      document.getElementById("dispContact").innerText = activeUser.phone;
+      document.getElementById("dispExpiry").innerText = `Valid: ${activeUser.duration} Days`;
+
+      const qrContainer = document.getElementById("qrcode");
+      qrContainer.innerHTML = "";
+      new QRCode(qrContainer, {
+        text: JSON.stringify({ did: activeUser.did, validUntil: activeUser.validUntil }),
+        width: 128,
+        height: 128
+      });
+
+      addLog(`DID Issued: ${activeUser.did}`);
+      
+      setTimeout(() => {
+        updateMobileMap(currentLat, currentLng, false);
+      }, 300);
+    }
+
+    function logoutDID() {
+      if (confirm("Revoke / Switch this Digital Pass?")) {
+        localStorage.removeItem("tourshield_user");
+        activeUser = null;
+        if (watchId) navigator.geolocation.clearWatch(watchId);
+        document.getElementById("mainDashboardView").style.display = "none";
+        document.getElementById("loginView").style.display = "block";
+      }
+    }
+
+    function updateMobileMap(lat, lng, isBreach) {
+      const container = document.getElementById('mobileMap');
+      if (!container) return;
+
+      if (!mobileLeafletMap) {
+        mobileLeafletMap = L.map('mobileMap', {
+          zoomControl: true,
+          attributionControl: false
+        }).setView([lat, lng], 16);
+
+        // OSM Tile layer with suppressed error handling to seamlessly reveal tactical radar grid offline
+        const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          crossOrigin: true
+        });
+
+        tileLayer.on('tileerror', function() {
+          // Silent fallback: keeps vector canvas clean on connection loss
+        });
+
+        tileLayer.addTo(mobileLeafletMap);
+
+        // Vector circle markers: completely offline-resilient SVG elements
+        mobileUserMarker = L.circleMarker([lat, lng], {
+          radius: 9,
+          fillColor: '#38bdf8',
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.95
+        }).addTo(mobileLeafletMap).bindPopup("<b>📍 Current Position (Safe Trail)</b>");
+
+        // Define restricted hazard sector (~600m offset)
+        const dangerOffsetLat = 0.006;
+        const dangerOffsetLng = 0.006;
+        const hazardCoords = [
+          [lat + dangerOffsetLat, lng + dangerOffsetLng],
+          [lat + dangerOffsetLat + 0.003, lng + dangerOffsetLng],
+          [lat + dangerOffsetLat + 0.003, lng + dangerOffsetLng + 0.003],
+          [lat + dangerOffsetLat, lng + dangerOffsetLng + 0.003]
+        ];
+
+        mobileHazardPolygon = L.polygon(hazardCoords, {
+          color: '#ef4444',
+          fillColor: '#dc2626',
+          fillOpacity: 0.4,
+          weight: 2
+        }).addTo(mobileLeafletMap).bindPopup("<b>⚠️ Restricted Danger Sector</b>");
+      } else {
+        mobileUserMarker.setLatLng([lat, lng]);
+
+        if (isBreach) {
+          mobileUserMarker.setStyle({ fillColor: '#ef4444' });
+          mobileUserMarker.bindPopup("<b>🚨 INSIDE DANGER ZONE!</b>").openPopup();
+          mobileLeafletMap.panTo([lat, lng]);
+        } else {
+          mobileUserMarker.setStyle({ fillColor: '#38bdf8' });
+          mobileUserMarker.bindPopup("<b>📍 Safe Trail Corridor</b>");
+        }
+      }
+
+      // Revalidate container bounds in DOM
+      setTimeout(() => {
+        if (mobileLeafletMap) {
+          mobileLeafletMap.invalidateSize();
+        }
+      }, 200);
+    }
+
+    function toggleTracking() {
+      const btn = document.getElementById("toggleBtn");
+      if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        btn.innerText = "Activate Edge Tracker";
+        btn.className = "btn-start";
+        document.getElementById("dispMode").innerText = "Paused";
+        addLog("GPS tracking suspended.");
+      } else {
+        if (!navigator.geolocation) {
+          alert("Geolocation hardware is not accessible on this device.");
+          return;
+        }
+
+        addLog("Acquiring high-accuracy satellite GPS...");
+
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            currentLat = pos.coords.latitude;
+            currentLng = pos.coords.longitude;
+            const acc = Math.round(pos.coords.accuracy);
+
+            document.getElementById("dispCoords").innerText = `${currentLat.toFixed(5)}, ${currentLng.toFixed(5)}`;
+            document.getElementById("dispMode").innerText = `Live GPS (±${acc}m)`;
+
+            if (!restrictedGeoZone) {
+              const dLat = 0.006;
+              const dLng = 0.006;
+              const size = 0.003;
+              restrictedGeoZone = turf.polygon([[
+                [currentLng + dLng, currentLat + dLat],
+                [currentLng + dLng + size, currentLat + dLat],
+                [currentLng + dLng + size, currentLat + dLat + size],
+                [currentLng + dLng, currentLat + dLat + size],
+                [currentLng + dLng, currentLat + dLat]
+              ]]);
+            }
+
+            const livePayload = {
+              did: activeUser ? activeUser.did : "did:tourshield:0x89b1",
+              name: activeUser ? activeUser.name : "Active Trekker",
+              lat: currentLat,
+              lng: currentLng,
+              accuracy: acc,
+              timestamp: new Date().toISOString()
+            };
+            localStorage.setItem("tourshield_live_gps", JSON.stringify(livePayload));
+
+            evaluateSafety(currentLat, currentLng);
+          },
+          (err) => {
+            addLog(`GPS Warning: ${err.message}. Please enable location permissions.`);
+          },
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+        );
+
+        initMotionSensors();
+        btn.innerText = "Deactivate Tracker";
+        btn.className = "btn-stop";
+        addLog("Edge Tracking Loop engaged.");
+      }
+    }
+
+    function evaluateSafety(lat, lng) {
+      let breached = false;
+      if (restrictedGeoZone) {
+        const pt = turf.point([lng, lat]);
+        breached = turf.booleanPointInPolygon(pt, restrictedGeoZone);
+      }
+
+      const banner = document.getElementById("statusBanner");
+
+      if (breached) {
+        banner.className = "status-banner status-breach";
+        banner.innerText = "⚠️ DANGER: GEO-FENCE BREACH!";
+        addLog("ALERT: Real-time boundary breach detected!");
+        updateMobileMap(lat, lng, true);
+      } else {
+        banner.className = "status-banner status-safe";
+        banner.innerText = "SECURE • PERMISSIBLE TRAIL";
+        updateMobileMap(lat, lng, false);
+      }
+    }
+
+    function simulateDangerZone() {
+      const breachLat = currentLat + 0.007;
+      const breachLng = currentLng + 0.007;
+
+      document.getElementById("dispCoords").innerText = `${breachLat.toFixed(5)}, ${breachLng.toFixed(5)}`;
+      addLog("Simulated movement into danger sector.");
+
+      evaluateSafety(breachLat, breachLng);
+
+      const breachPayload = {
+        did: activeUser ? activeUser.did : "did:tourshield:0x89b1",
+        name: activeUser ? activeUser.name : "Active Trekker",
+        lat: breachLat,
+        lng: breachLng,
+        accuracy: 5,
+        timestamp: new Date().toISOString()
+      };
+      localStorage.setItem("tourshield_live_gps", JSON.stringify(breachPayload));
+    }
+
+    function initMotionSensors() {
+      if (window.DeviceMotionEvent) {
+        let lastTrigger = 0;
+        window.addEventListener("devicemotion", (e) => {
+          const acc = e.accelerationIncludingGravity;
+          if (!acc) return;
+
+          const gForce = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+          const now = Date.now();
+
+          // Threshold: G-Force > 26 m/s² indicates fall impact
+          if (gForce > 26 && (now - lastTrigger > 10000)) {
+            lastTrigger = now;
+            document.getElementById("dispMotion").innerText = "FALL / IMPACT DETECTED!";
+            document.getElementById("dispMotion").style.color = "#f87171";
+            addLog("🚨 Severe fall detected! Launching 2G emergency SMS dispatch...");
+            
+            sendDirectSMS("FALL_IMPACT_ANOMALY");
+          }
+        });
+      }
+    }
+
+    function sendDirectSMS(reason) {
+      const did = activeUser ? activeUser.did : "did:tourshield:0x89b1";
+      const targetPhone = activeUser ? activeUser.phone : "9876543210";
+      const locStr = `https://maps.google.com/?q=${currentLat.toFixed(5)},${currentLng.toFixed(5)}`;
+      const messageText = `EMERGENCY SOS: ID=${did} EVENT=${reason} LOC=${locStr}`;
+
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      const separator = isIOS ? '&body=' : '?body=';
+      const smsUri = `sms:${targetPhone}${separator}${encodeURIComponent(messageText)}`;
+
+      addLog(`Opening 2G SMS Carrier Protocol... [${reason}]`);
+      window.location.href = smsUri;
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const stored = localStorage.getItem("tourshield_user");
+      if (stored) {
+        activeUser = JSON.parse(stored);
+        renderDashboard();
+      }
+    });
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch((err) => {
+          console.error('ServiceWorker registration failed: ', err);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
